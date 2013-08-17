@@ -1,7 +1,6 @@
 ﻿using System;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
-using Moq;
 using Xunit;
 using System.Reactive.Linq;
 using System.Reactive.Concurrency;
@@ -17,16 +16,21 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 
 		public MessageReceiverObservableExtensionsTests()
 		{
-			TokenProvider tp = TokenProvider.CreateSharedSecretTokenProvider("owner", "");
+			TokenProvider tp = TokenProvider.CreateSharedSecretTokenProvider("owner", "kzPziJzFWd4cj5kpgFk3Si70zIPpHCXR31BIWIJDh3M=");
 
 			this.namespaceManager = new NamespaceManager(
-				"",
+				"sb://dmarsh-msdn.servicebus.windows.net",
 				new NamespaceManagerSettings
 				{
 					TokenProvider = tp
 				});
 
-			this.queueDescription = this.namespaceManager.CreateQueue("MessageReceiverObservableExtensionTests-" + Guid.NewGuid().ToString("N"));
+			string queueName = "MessageReceiverConsoleApp";
+
+			if(!this.namespaceManager.QueueExists(queueName))
+			{
+				this.queueDescription = this.namespaceManager.CreateQueue(queueName);
+			}		
 
 			MessagingFactory messagingFactory = MessagingFactory.Create(
 				this.namespaceManager.Address,
@@ -47,10 +51,8 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 			this.namespaceManager.DeleteQueue(this.queueDescription.Path);
 		}
 
-		public class AsObservableFacts : MessageReceiverObservableExtensionsTests
+		public class ToObservableFacts : MessageReceiverObservableExtensionsTests
 		{
-
-
 			[Fact]
 			public void Should_Throw_ArgumentNullException_For_Null_MessageReceiver_Instance()
 			{
@@ -83,7 +85,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 						MessageId = newMessageId
 					});
 
-				string receivedMessageId = this.messageReceiver.AsObservable(NewThreadScheduler.Default).Take(1).Select(bm => bm.MessageId).First();
+				string receivedMessageId = this.messageReceiver.AsObservable().Take(1).Select(bm => bm.MessageId).First();
 
 				Assert.Equal(newMessageId, receivedMessageId);
 			}
@@ -105,7 +107,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 					MessageId = secondMessageId
 				});
 
-				Assert.True(this.messageReceiver.AsObservable(NewThreadScheduler.Default).Take(2).Select(bm => bm.MessageId).SequenceEqual(new[] { firstMessageId, secondMessageId }).First());
+				Assert.True(this.messageReceiver.AsObservable().Take(2).Select(bm => bm.MessageId).SequenceEqual(new[] { firstMessageId, secondMessageId }).First());
 			}
 		}
 	}

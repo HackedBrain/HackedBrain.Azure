@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ServiceBus.Messaging;
+using System.Reactive.PlatformServices;
+using System.Reactive.Disposables;
 
 namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 {
@@ -14,78 +16,66 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 	{
 		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver)
 		{
-			return messageReceiver.AsObservable(CancellationToken.None, Scheduler.Immediate);
+			return messageReceiver.AsObservable(TimeSpan.MinValue, ImmediateScheduler.Instance);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, CancellationToken cancellationToken)
+		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
 		{
-			return messageReceiver.AsObservable(cancellationToken, Scheduler.Immediate);
+			return messageReceiver.AsObservable(receiveWaitTime, ImmediateScheduler.Instance);
 		}
 
 		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, IScheduler scheduler)
 		{
-			return messageReceiver.AsObservable(CancellationToken.None, scheduler);
+			return messageReceiver.AsObservable(TimeSpan.MinValue, scheduler);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservableFullAsync(this MessageReceiver messageReceiver, CancellationToken cancellationToken, IScheduler scheduler)
+		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
 		{
 			if(messageReceiver == null)
 			{
 				throw new ArgumentNullException("messageReceiver");
 			}
 
-			Func<IScheduler, CancellationToken, Task<IDisposable>> recursiveMessageReceiver = null;
-
-			return Observable.Create<BrokeredMessage>(
+			IObservable<BrokeredMessage> brokeredMessages = Observable.Create<BrokeredMessage>(
 				observer =>
 				{
-					recursiveMessageReceiver = async (recursiveScheduler, recursiveCancellationToken) =>
+					Func<Task<BrokeredMessage>> receiveCall = receiveWaitTime != TimeSpan.MinValue ? 
+						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime)) :
+						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync());
+
+					Func<IScheduler, CancellationToken, Task<IDisposable>> messagePump = null;
+
+					messagePump = async (previousScheduler, cancellationToken) =>
 					{
-						try
+						cancellationToken.ThrowIfCancellationRequested();
+
+						if(messageReceiver.IsClosed)
 						{
-							BrokeredMessage message = await messageReceiver.ReceiveAsync();
+							observer.OnCompleted();
 
-							observer.OnNext(message);
+							return Disposable.Empty;
 						}
-						catch(Exception exception)
-						{
-							observer.OnError(exception);
-						}
-
-						return recursiveScheduler.ScheduleAsync(recursiveMessageReceiver);
-					};
-
-					return scheduler.ScheduleAsync(recursiveMessageReceiver);
-				});
-		}
-
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, CancellationToken cancellationToken, IScheduler scheduler)
-		{
-			if(messageReceiver == null)
-			{
-				throw new ArgumentNullException("messageReceiver");
-			}
-
-			return Observable.Create<BrokeredMessage>(
-				observer =>
-				{
-					return scheduler.Schedule(
-						recurse =>
+						else
 						{
 							try
 							{
-								BrokeredMessage message = messageReceiver.Receive();
+								BrokeredMessage nextMessage = await receiveCall();
 
-								observer.OnNext(message);
+								observer.OnNext(nextMessage);
 							}
 							catch(Exception exception)
 							{
 								observer.OnError(exception);
 							}
 
-							scheduler.Schedule(recurse);
-						});
+							return ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+						}						
+					};
+
+					return scheduler.ScheduleAsync(messagePump);
 				});
+
+			return Observable.Using(() => Disposable.Create(() => messageReceiver.Close()), _ => brokeredMessages);
 		}
 	}
 }
