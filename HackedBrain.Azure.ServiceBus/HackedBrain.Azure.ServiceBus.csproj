@@ -66,6 +66,7 @@
   <ItemGroup>
     <Compile Include="MessageReceiverExtensions.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="QueueClientExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

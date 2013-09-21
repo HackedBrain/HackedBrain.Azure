@@ -14,22 +14,22 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 {
 	public static class MessageReceiverExtensions
 	{
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver)
 		{
-			return messageReceiver.AsObservable(TimeSpan.MinValue, ImmediateScheduler.Instance);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, TaskPoolScheduler.Default);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
 		{
-			return messageReceiver.AsObservable(receiveWaitTime, ImmediateScheduler.Instance);
+			return messageReceiver.WhenMessageReceived(receiveWaitTime, TaskPoolScheduler.Default);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, IScheduler scheduler)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, IScheduler scheduler)
 		{
-			return messageReceiver.AsObservable(TimeSpan.MinValue, scheduler);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, scheduler);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
 		{
 			if(messageReceiver == null)
 			{
@@ -39,9 +39,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 			IObservable<BrokeredMessage> brokeredMessages = Observable.Create<BrokeredMessage>(
 				observer =>
 				{
-					Func<Task<BrokeredMessage>> receiveCall = receiveWaitTime != TimeSpan.MinValue ? 
-						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime)) :
-						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync());
+					Func<Task<BrokeredMessage>> receiveFunc = receiveWaitTime == TimeSpan.MinValue ? messageReceiver.ReceiveAsync : new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime));
 
 					Func<IScheduler, CancellationToken, Task<IDisposable>> messagePump = null;
 
@@ -49,27 +47,54 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 					{
 						cancellationToken.ThrowIfCancellationRequested();
 
+						IDisposable disposable;
+
 						if(messageReceiver.IsClosed)
 						{
 							observer.OnCompleted();
 
-							return Disposable.Empty;
+							disposable = Disposable.Empty;
 						}
 						else
 						{
 							try
 							{
-								BrokeredMessage nextMessage = await receiveCall();
+								BrokeredMessage nextMessage = await receiveFunc();
 
-								observer.OnNext(nextMessage);
+								if(nextMessage != null)
+								{
+									observer.OnNext(nextMessage);
+
+									disposable = ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+								}
+								else
+								{
+									observer.OnCompleted();
+
+									disposable = Disposable.Empty;
+								}								
+							}
+							catch(OperationCanceledException)
+							{
+								observer.OnCompleted();
+
+								disposable = Disposable.Empty;
+							}
+							catch(TimeoutException)
+							{
+								observer.OnCompleted();
+
+								disposable = Disposable.Empty;
 							}
 							catch(Exception exception)
 							{
 								observer.OnError(exception);
-							}
 
-							return ImmediateScheduler.Instance.ScheduleAsync(messagePump);
-						}						
+								disposable = Disposable.Empty;
+							}
+						}
+
+						return disposable;
 					};
 
 					return scheduler.ScheduleAsync(messagePump);

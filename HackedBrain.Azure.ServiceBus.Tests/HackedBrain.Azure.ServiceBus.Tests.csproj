@@ -76,7 +76,8 @@
     </Otherwise>
   </Choose>
   <ItemGroup>
-    <Compile Include="MessageReceiverExtentions.cs" />
+    <Compile Include="QueueClientExtensionTests.cs" />
+    <Compile Include="MessageReceiverExtensionsTests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

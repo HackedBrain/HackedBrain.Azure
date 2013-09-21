@@ -1,114 +1,106 @@
 ﻿using System;
-using Microsoft.ServiceBus;
-using Microsoft.ServiceBus.Messaging;
-using Xunit;
-using System.Reactive.Linq;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reactive.Concurrency;
+using System.Reactive.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.ServiceBus.Messaging;
+using System.Reactive.PlatformServices;
+using System.Reactive.Disposables;
 
-namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
+namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 {
-	public class MessageReceiverObservableExtensionsTests : IDisposable
+	public static class MessageReceiverExtensions
 	{
-		private NamespaceManager namespaceManager;
-		private QueueDescription queueDescription;
-		private MessageSender messageSender;
-		private MessageReceiver messageReceiver;
-
-		public MessageReceiverObservableExtensionsTests()
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver)
 		{
-			TokenProvider tp = TokenProvider.CreateSharedSecretTokenProvider("owner", "kzPziJzFWd4cj5kpgFk3Si70zIPpHCXR31BIWIJDh3M=");
-
-			this.namespaceManager = new NamespaceManager(
-				"sb://dmarsh-msdn.servicebus.windows.net",
-				new NamespaceManagerSettings
-				{
-					TokenProvider = tp
-				});
-
-			string queueName = "MessageReceiverConsoleApp";
-
-			if(!this.namespaceManager.QueueExists(queueName))
-			{
-				this.queueDescription = this.namespaceManager.CreateQueue(queueName);
-			}		
-
-			MessagingFactory messagingFactory = MessagingFactory.Create(
-				this.namespaceManager.Address,
-				new MessagingFactorySettings
-				{
-					TokenProvider = tp
-				});
-
-			this.messageSender = messagingFactory.CreateMessageSender(this.queueDescription.Path);
-			this.messageReceiver = messagingFactory.CreateMessageReceiver(this.queueDescription.Path);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, TaskPoolScheduler.Default);
 		}
 
-		public void Dispose()
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
 		{
-			this.messageSender.Close();
-			this.messageReceiver.Close();
-
-			this.namespaceManager.DeleteQueue(this.queueDescription.Path);
+			return messageReceiver.WhenMessageReceived(receiveWaitTime, TaskPoolScheduler.Default);
 		}
 
-		public class ToObservableFacts : MessageReceiverObservableExtensionsTests
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, IScheduler scheduler)
 		{
-			[Fact]
-			public void Should_Throw_ArgumentNullException_For_Null_MessageReceiver_Instance()
-			{
-				MessageReceiver messageReceiver = null;
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, scheduler);
+		}
 
-				Assert.Throws<ArgumentNullException>(() =>
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
+		{
+			if(messageReceiver == null)
+			{
+				throw new ArgumentNullException("messageReceiver");
+			}
+
+			IObservable<BrokeredMessage> brokeredMessages = Observable.Create<BrokeredMessage>(
+				observer =>
+				{
+					Func<Task<BrokeredMessage>> receiveFunc = receiveWaitTime == TimeSpan.MinValue ? messageReceiver.ReceiveAsync : new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime));
+
+					Func<IScheduler, CancellationToken, Task<IDisposable>> messagePump = null;
+
+					messagePump = async (previousScheduler, cancellationToken) =>
 					{
-						messageReceiver.AsObservable();
-					});
-			}
+						cancellationToken.ThrowIfCancellationRequested();
 
-			[Fact]
-			public void Should_Return_NonNull_IObservable_Instance()
-			{
-				IObservable<BrokeredMessage> messageReceiverObservable = this.messageReceiver.AsObservable();
+						IDisposable disposable;
 
-				Assert.NotNull(messageReceiverObservable);
-			}
-		}
+						if(messageReceiver.IsClosed)
+						{
+							observer.OnCompleted();
 
-		public class ObservableMessageReceptionFacts : MessageReceiverObservableExtensionsTests
-		{
-			[Fact]
-			public void Should_Receive_Expected_Message()
-			{
-				string newMessageId = Guid.NewGuid().ToString();
+							disposable = Disposable.Empty;
+						}
+						else
+						{
+							try
+							{
+								BrokeredMessage nextMessage = await receiveFunc();
 
-				this.messageSender.Send(new BrokeredMessage
-					{
-						MessageId = newMessageId
-					});
+								if(nextMessage != null)
+								{
+									observer.OnNext(nextMessage);
 
-				string receivedMessageId = this.messageReceiver.AsObservable().Take(1).Select(bm => bm.MessageId).First();
+									disposable = ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+								}
+								else
+								{
+									observer.OnCompleted();
 
-				Assert.Equal(newMessageId, receivedMessageId);
-			}
+									disposable = Disposable.Empty;
+								}								
+							}
+							catch(OperationCanceledException)
+							{
+								observer.OnCompleted();
 
-			[Fact]
-			public void Should_Receive_Expected_Messages_In_Order()
-			{
-				string firstMessageId = Guid.NewGuid().ToString();
+								disposable = Disposable.Empty;
+							}
+							catch(TimeoutException)
+							{
+								observer.OnCompleted();
 
-				this.messageSender.Send(new BrokeredMessage
-				{
-					MessageId = firstMessageId
+								disposable = Disposable.Empty;
+							}
+							catch(Exception exception)
+							{
+								observer.OnError(exception);
+
+								disposable = Disposable.Empty;
+							}
+						}
+
+						return disposable;
+					};
+
+					return scheduler.ScheduleAsync(messagePump);
 				});
 
-				string secondMessageId = Guid.NewGuid().ToString();
-
-				this.messageSender.Send(new BrokeredMessage
-				{
-					MessageId = secondMessageId
-				});
-
-				Assert.True(this.messageReceiver.AsObservable().Take(2).Select(bm => bm.MessageId).SequenceEqual(new[] { firstMessageId, secondMessageId }).First());
-			}
+			return Observable.Using(() => Disposable.Create(() => messageReceiver.Close()), _ => brokeredMessages);
 		}
 	}
 }
