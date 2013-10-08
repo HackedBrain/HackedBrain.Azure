@@ -1,7 +1,11 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Reactive.Concurrency;
+using System.Reactive.Threading.Tasks;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
 using Xunit;
@@ -49,7 +53,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 			this.namespaceManager.DeleteQueue(this.queueDescription.Path);
 		}
 
-		public class AsSessionObservableFacts : QueueClientObservableExtensionsTests
+		public class WhenSessionAcceptedFacts : QueueClientObservableExtensionsTests
 		{
 			[Fact]
 			public void Should_Throw_ArgumentNullException_For_Null_QueueClient_Instance()
@@ -74,7 +78,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 		public class ObservableMessageSessionFacts : QueueClientObservableExtensionsTests
 		{
 			[Fact]
-			public void Should_Receive_Expected_Session_Message()
+			public async Task Should_Receive_Expected_Session_Message()
 			{
 				string newSessionId = Guid.NewGuid().ToString();
 				string newMessageId = Guid.NewGuid().ToString();
@@ -85,20 +89,20 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 						MessageId = newMessageId
 					});
 
-				var receviedMessageInfo = (from session in this.queueClient.WhenSessionAccepted()
-										   from msg in session.WhenMessageReceived()
-										   select new
-										   {
-											   SessionId = session.SessionId,
-											   MessageId = msg.MessageId
-										   }).Take(1).First();
+				var receviedMessageInfo = await (from session in this.queueClient.WhenSessionAccepted()
+												 from msg in session.WhenMessageReceived()
+												 select new
+												 {
+													 SessionId = session.SessionId,
+													 MessageId = msg.MessageId
+												 }).Take(1).FirstAsync();
 
 				Assert.Equal(newSessionId, receviedMessageInfo.SessionId);
 				Assert.Equal(newMessageId, receviedMessageInfo.MessageId);
 			}
 
 			[Fact]
-			public void Should_Receive_Session_Messages_In_Expected_Sequence()
+			public async Task Should_Receive_Messages_For_Multiple_Concurrent_Sessions_In_Expected_Sequence()
 			{
 				string firstSessionId = Guid.NewGuid().ToString();
 
@@ -130,68 +134,80 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 
 				this.queueClient.Send(new BrokeredMessage
 				{
-					SessionId = secondSessionId,
-					MessageId = "C",
-				});
-
-				this.queueClient.Send(new BrokeredMessage
-				{
 					SessionId = firstSessionId,
 					MessageId = "3",
 				});
 
-				this.queueClient.WhenSessionAccepted(TimeSpan.FromSeconds(5))
-					.SelectMany(messageSession =>
-						messageSession.WhenMessageReceived(TimeSpan.FromSeconds(1))
-							.SelectMany(
-								message => Observable.Using(
-																() => message,
-																m => Observable.Return(new
-																{
-																	messageSession.SessionId,
-																	m.MessageId
-																}))))
-					.ForEach(
-						it =>
-						{
-							Trace.TraceInformation(it.SessionId + " : " + it.MessageId);
-						});
-				//.SequenceEqual(new[]
-				//  {
-				//	  new 
-				//	  {
-				//		  SessionId = firstSessionId,
-				//		  MessageId = "1",
-				//	  },
-				//	  new 
-				//	  {
-				//		  SessionId = firstSessionId,
-				//		  MessageId = "2",
-				//	  },
-				//	  new 
-				//	  {
-				//		  SessionId = firstSessionId,
-				//		  MessageId = "3",
-				//	  },
-				//	  new 
-				//	  {
-				//		  SessionId = secondSessionId,
-				//		  MessageId = "A",
-				//	  },
-				//	  new 
-				//	  {
-				//		  SessionId = secondSessionId,
-				//		  MessageId = "B",
-				//	  },
-				//	  new 
-				//	  {
-				//		  SessionId = secondSessionId,
-				//		  MessageId = "C",
-				//	  }
-				//  }).First();
+				this.queueClient.Send(new BrokeredMessage
+				{
+					SessionId = secondSessionId,
+					MessageId = "C",
+				});
 
-				//Assert.True(sequenceIsAsExpected);
-				Debug.WriteLine("test");
+				await (from messageSession in this.queueClient.WhenSessionAccepted(TimeSpan.FromSeconds(5))
+					   from message in messageSession.WhenMessageReceived(TimeSpan.FromSeconds(1))
+					   from it in Observable.Using(
+											   () =>
+											   {
+												   message.Complete();
+												   return message;
+											   },
+											   m => Observable.Return(new
+											   {
+												   messageSession.SessionId,
+												   m.MessageId
+											   }))
+					   group it by it.SessionId into its
+					   select its)
+					.ForEachAsync(async g =>
+						{
+							bool sequenceIsAsExpected;
+
+							if(g.Key == firstSessionId)
+							{
+								sequenceIsAsExpected = await g.SequenceEqual(new[]
+								  {
+									  new 
+									  {
+										  SessionId = firstSessionId,
+										  MessageId = "1",
+									  },
+									  new 
+									  {
+										  SessionId = firstSessionId,
+										  MessageId = "2",
+									  },
+									  new 
+									  {
+										  SessionId = firstSessionId,
+										  MessageId = "3",
+									  }
+								  }).FirstAsync();
+							}
+							else
+							{
+								sequenceIsAsExpected = await g.SequenceEqual(new[]
+								{
+									  new 
+									  {
+										  SessionId = secondSessionId,
+										  MessageId = "A",
+									  },
+									  new 
+									  {
+										  SessionId = secondSessionId,
+										  MessageId = "B",
+									  },
+									  new 
+									  {
+										  SessionId = secondSessionId,
+										  MessageId = "C",
+									  }
+								}).FirstAsync();
+							}
+
+							Assert.True(sequenceIsAsExpected);
+						});
 			}
 		}
 	}

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Reactive.Linq;
+using System.Threading.Tasks;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
 using Xunit;
@@ -47,7 +48,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 			this.namespaceManager.DeleteQueue(this.queueDescription.Path);
 		}
 
-		public class ToObservableFacts : MessageReceiverObservableExtensionsTests
+		public class WhenMessageReceivedFacts : MessageReceiverObservableExtensionsTests
 		{
 			[Fact]
 			public void Should_Throw_ArgumentNullException_For_Null_MessageReceiver_Instance()
@@ -72,7 +73,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 		public class ObservableMessageReceptionFacts : MessageReceiverObservableExtensionsTests
 		{
 			[Fact]
-			public void Should_Receive_Expected_Message()
+			public async Task Should_Receive_Expected_Message()
 			{
 				string newMessageId = Guid.NewGuid().ToString();
 
@@ -81,13 +82,13 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 						MessageId = newMessageId
 					});
 
-				string receivedMessageId = this.messageReceiver.WhenMessageReceived().Take(1).Select(bm => bm.MessageId).First();
+				string receivedMessageId = await this.messageReceiver.WhenMessageReceived().Take(1).Select(bm => bm.MessageId).FirstAsync();
 
 				Assert.Equal(newMessageId, receivedMessageId);
 			}
 
 			[Fact]
-			public void Should_Receive_Expected_Messages_In_Order()
+			public async Task Should_Receive_Expected_Messages_In_Order()
 			{
 				string firstMessageId = Guid.NewGuid().ToString();
 
@@ -103,7 +104,9 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 					MessageId = secondMessageId
 				});
 
-				Assert.True(this.messageReceiver.WhenMessageReceived().Take(2).Select(bm => bm.MessageId).SequenceEqual(new[] { firstMessageId, secondMessageId }).First());
+				bool sequencesAreEqual = await this.messageReceiver.WhenMessageReceived().Take(2).Select(bm => bm.MessageId).SequenceEqual(new[] { firstMessageId, secondMessageId }).FirstAsync();
+
+				Assert.True(sequencesAreEqual);
 			}
 		}
 	}

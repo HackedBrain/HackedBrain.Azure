@@ -16,12 +16,12 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 	{
 		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver)
 		{
-			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, TaskPoolScheduler.Default);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, ImmediateScheduler.Instance);
 		}
 
 		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
 		{
-			return messageReceiver.WhenMessageReceived(receiveWaitTime, TaskPoolScheduler.Default);
+			return messageReceiver.WhenMessageReceived(receiveWaitTime, ImmediateScheduler.Instance);
 		}
 
 		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, IScheduler scheduler)
@@ -45,53 +45,60 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 
 					messagePump = async (previousScheduler, cancellationToken) =>
 					{
-						cancellationToken.ThrowIfCancellationRequested();
-
 						IDisposable disposable;
 
-						if(messageReceiver.IsClosed)
+						if(!cancellationToken.IsCancellationRequested)
 						{
-							observer.OnCompleted();
-
-							disposable = Disposable.Empty;
-						}
-						else
-						{
-							try
+							if(messageReceiver.IsClosed)
 							{
-								BrokeredMessage nextMessage = await receiveFunc();
+								observer.OnCompleted();
 
-								if(nextMessage != null)
+								disposable = Disposable.Empty;
+							}
+							else
+							{
+								try
 								{
-									observer.OnNext(nextMessage);
+									BrokeredMessage nextMessage = await receiveFunc();
 
-									disposable = ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+									if(nextMessage != null)
+									{
+										observer.OnNext(nextMessage);
+
+										disposable = ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+									}
+									else
+									{
+										observer.OnCompleted();
+
+										disposable = Disposable.Empty;
+									}
 								}
-								else
+								catch(OperationCanceledException)
 								{
 									observer.OnCompleted();
 
 									disposable = Disposable.Empty;
-								}								
-							}
-							catch(OperationCanceledException)
-							{
-								observer.OnCompleted();
+								}
+								catch(TimeoutException)
+								{
+									observer.OnCompleted();
 
-								disposable = Disposable.Empty;
-							}
-							catch(TimeoutException)
-							{
-								observer.OnCompleted();
+									disposable = Disposable.Empty;
+								}
+								catch(Exception exception)
+								{
+									observer.OnError(exception);
 
-								disposable = Disposable.Empty;
+									disposable = Disposable.Empty;
+								}
 							}
-							catch(Exception exception)
-							{
-								observer.OnError(exception);
-
-								disposable = Disposable.Empty;
-							}
+						}
+						else
+						{
+							observer.OnCompleted();
+							
+							disposable = Disposable.Empty;
 						}
 
 						return disposable;
