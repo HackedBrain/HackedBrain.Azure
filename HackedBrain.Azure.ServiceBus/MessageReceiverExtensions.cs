@@ -14,102 +14,100 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 {
 	public static class MessageReceiverExtensions
 	{
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver)
 		{
-			return messageReceiver.AsObservable(TimeSpan.MinValue, ImmediateScheduler.Instance);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, ImmediateScheduler.Instance);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime)
 		{
-			return messageReceiver.AsObservable(receiveWaitTime, ImmediateScheduler.Instance);
+			return messageReceiver.WhenMessageReceived(receiveWaitTime, ImmediateScheduler.Instance);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, IScheduler scheduler)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, IScheduler scheduler)
 		{
-			return messageReceiver.AsObservable(TimeSpan.MinValue, scheduler);
+			return messageReceiver.WhenMessageReceived(TimeSpan.MinValue, scheduler);
 		}
 
-		public static IObservable<BrokeredMessage> AsObservable(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
+		public static IObservable<BrokeredMessage> WhenMessageReceived(this MessageReceiver messageReceiver, TimeSpan receiveWaitTime, IScheduler scheduler)
 		{
 			if(messageReceiver == null)
 			{
 				throw new ArgumentNullException("messageReceiver");
 			}
 
-			Func<Task<BrokeredMessage>> receiveMessage = receiveWaitTime != TimeSpan.MinValue ?
-						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime)) :
-						new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync());
-
-			return MessageReceiverExtensions.ObservableFromAsyncReceiverDetails(() => messageReceiver.IsClosed, () => messageReceiver.Close(), receiveMessage, scheduler);
-		}
-
-		public static IObservable<BrokeredMessage> AsObservable(this QueueClient queueClient)
-		{
-			return queueClient.AsObservable(TimeSpan.MinValue, ImmediateScheduler.Instance);
-		}
-
-		public static IObservable<BrokeredMessage> AsObservable(this QueueClient queueClient, IScheduler scheduler)
-		{
-			return queueClient.AsObservable(TimeSpan.MinValue, scheduler);
-		}
-
-		public static IObservable<BrokeredMessage> AsObservable(this QueueClient queueClient, TimeSpan receiveWaitTime)
-		{
-			return queueClient.AsObservable(receiveWaitTime, ImmediateScheduler.Instance);
-		}
-
-		public static IObservable<BrokeredMessage> AsObservable(this QueueClient queueClient, TimeSpan receiveWaitTime, IScheduler scheduler)
-		{
-			if(queueClient == null)
-			{
-				throw new ArgumentNullException("queueClient");
-			}
-
-			Func<Task<BrokeredMessage>> receiveMessage = receiveWaitTime != TimeSpan.MinValue ?
-						new Func<Task<BrokeredMessage>>(() => queueClient.ReceiveAsync(receiveWaitTime)) :
-						new Func<Task<BrokeredMessage>>(() => queueClient.ReceiveAsync());
-
-			return MessageReceiverExtensions.ObservableFromAsyncReceiverDetails(() => queueClient.IsClosed, () => queueClient.Close(), receiveMessage, scheduler);
-		}
-
-		private static IObservable<BrokeredMessage> ObservableFromAsyncReceiverDetails(Func<bool> receiverIsClosed, Action receiverClose, Func<Task<BrokeredMessage>> receiveMessage, IScheduler scheduler)
-		{
 			IObservable<BrokeredMessage> brokeredMessages = Observable.Create<BrokeredMessage>(
 				observer =>
 				{
+					Func<Task<BrokeredMessage>> receiveFunc = receiveWaitTime == TimeSpan.MinValue ? messageReceiver.ReceiveAsync : new Func<Task<BrokeredMessage>>(() => messageReceiver.ReceiveAsync(receiveWaitTime));
+
 					Func<IScheduler, CancellationToken, Task<IDisposable>> messagePump = null;
 
 					messagePump = async (previousScheduler, cancellationToken) =>
 					{
-						cancellationToken.ThrowIfCancellationRequested();
+						IDisposable disposable;
 
-						if(receiverIsClosed())
+						if(!cancellationToken.IsCancellationRequested)
 						{
-							observer.OnCompleted();
+							if(messageReceiver.IsClosed)
+							{
+								observer.OnCompleted();
 
-							return Disposable.Empty;
+								disposable = Disposable.Empty;
+							}
+							else
+							{
+								try
+								{
+									BrokeredMessage nextMessage = await receiveFunc();
+
+									if(nextMessage != null)
+									{
+										observer.OnNext(nextMessage);
+
+										disposable = ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+									}
+									else
+									{
+										observer.OnCompleted();
+
+										disposable = Disposable.Empty;
+									}
+								}
+								catch(OperationCanceledException)
+								{
+									observer.OnCompleted();
+
+									disposable = Disposable.Empty;
+								}
+								catch(TimeoutException)
+								{
+									observer.OnCompleted();
+
+									disposable = Disposable.Empty;
+								}
+								catch(Exception exception)
+								{
+									observer.OnError(exception);
+
+									disposable = Disposable.Empty;
+								}
+							}
 						}
 						else
 						{
-							try
-							{
-								BrokeredMessage nextMessage = await receiveMessage();
-
-								observer.OnNext(nextMessage);
-							}
-							catch(Exception exception)
-							{
-								observer.OnError(exception);
-							}
-
-							return ImmediateScheduler.Instance.ScheduleAsync(messagePump);
+							observer.OnCompleted();
+							
+							disposable = Disposable.Empty;
 						}
+
+						return disposable;
 					};
 
 					return scheduler.ScheduleAsync(messagePump);
 				});
 
-			return Observable.Using(() => Disposable.Create(receiverClose), _ => brokeredMessages);
+			return Observable.Using(() => Disposable.Create(() => messageReceiver.Close()), _ => brokeredMessages);
 		}
 	}
 }

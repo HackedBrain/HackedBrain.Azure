@@ -18,10 +18,10 @@ namespace HackedBrain.Azure.ServiceBus.Samples
 			QueueDescription queueDescription;
 			QueueClient queueClient;
 
-			TokenProvider tp = TokenProvider.CreateSharedSecretTokenProvider("owner", "AEKOXTG5x21S1ZIdOl3m5xU+EfR+WOUGrxKsaqDfgD0=");
+			TokenProvider tp = TokenProvider.CreateSharedAccessSignatureTokenProvider(args[1], args[2]);
 
 			namespaceManager = new NamespaceManager(
-				"sb://dmarsh-msdn.servicebus.windows.net",
+				args[0],
 				new NamespaceManagerSettings
 				{
 					TokenProvider = tp
@@ -78,7 +78,7 @@ namespace HackedBrain.Azure.ServiceBus.Samples
 			{
 				for(MessageSession nextSession = queueClient.AcceptMessageSession(TimeSpan.FromSeconds(30)); !cancellationTokenSource.IsCancellationRequested && nextSession != null; nextSession = queueClient.AcceptMessageSession(TimeSpan.FromSeconds(30)))
 				{
-					nextSession.AsObservable().Subscribe(
+					nextSession.WhenMessageReceived().Subscribe(
 					bm =>
 					{
 						Console.WriteLine("Received Message: SessionId={0}, MessageId={1}", bm.SessionId, bm.MessageId);
