@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
 using HackedBrain.WindowsAzure.ServiceBus.Messaging;
+using System.Reactive.Linq;
 
 namespace HackedBrain.Azure.ServiceBus.Samples
 {
@@ -74,19 +75,13 @@ namespace HackedBrain.Azure.ServiceBus.Samples
 
 			CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
 
-			Task readSessionMessages = Task.Run(() =>
-			{
-				for(MessageSession nextSession = queueClient.AcceptMessageSession(TimeSpan.FromSeconds(30)); !cancellationTokenSource.IsCancellationRequested && nextSession != null; nextSession = queueClient.AcceptMessageSession(TimeSpan.FromSeconds(30)))
+			queueClient.WhenSessionAccepted(TimeSpan.FromSeconds(30))
+				.SelectMany(session => session.WhenMessageReceived())
+				.Subscribe(bm =>
 				{
-					nextSession.WhenMessageReceived().Subscribe(
-					bm =>
-					{
-						Console.WriteLine("Received Message: SessionId={0}, MessageId={1}", bm.SessionId, bm.MessageId);
-					},
-					cancellationTokenSource.Token);
-				}
-			},
-			cancellationTokenSource.Token);
+					Console.WriteLine("[{0}] Received Message: SessionId={1}, MessageId={2}", Thread.CurrentThread.ManagedThreadId, bm.SessionId, bm.MessageId);
+				},
+				cancellationTokenSource.Token);
 
 			Task writeSessionMessages = Task.Run(async () =>
 				{
@@ -120,7 +115,7 @@ namespace HackedBrain.Azure.ServiceBus.Samples
 
 			Console.WriteLine("Stopping...");
 
-			Task.WaitAll(readSessionMessages, writeSessionMessages);
+			writeSessionMessages.Wait();
 
 			Console.WriteLine("Stopped!");
 		}
