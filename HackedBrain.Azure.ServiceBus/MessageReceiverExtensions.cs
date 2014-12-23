@@ -1,14 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reactive.Concurrency;
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ServiceBus.Messaging;
-using System.Reactive.PlatformServices;
-using System.Reactive.Disposables;
 
 namespace HackedBrain.WindowsAzure.ServiceBus.Messaging
 {

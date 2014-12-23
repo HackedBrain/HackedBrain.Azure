@@ -16,7 +16,7 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 
 		public MessageReceiverObservableExtensionsTests()
 		{
-			TokenProvider tp = TokenProvider.CreateSharedSecretTokenProvider("owner", "AEKOXTG5x21S1ZIdOl3m5xU+EfR+WOUGrxKsaqDfgD0=");
+			TokenProvider tp = TokenProvider.CreateSharedAccessSignatureTokenProvider("RootManageSharedAccessKey", "nOjksNbZ+HGWJgGDyXqKj3zGu1JubtMVRsHMbuzWI7Y=");
 
 			this.namespaceManager = new NamespaceManager(
 				"sb://dmarsh-msdn.servicebus.windows.net",
