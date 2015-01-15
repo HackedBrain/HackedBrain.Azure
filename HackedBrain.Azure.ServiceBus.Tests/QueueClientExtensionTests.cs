@@ -1,11 +1,7 @@
 ﻿using System;
-using System.Diagnostics;
-using System.Reactive.Concurrency;
-using System.Reactive.Threading.Tasks;
-using System.Reactive.Disposables;
 using System.Reactive.Linq;
-using System.Threading;
 using System.Threading.Tasks;
+using HackedBrain.Azure.ServiceBus.Tests;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
 using Xunit;
@@ -14,43 +10,29 @@ namespace HackedBrain.WindowsAzure.ServiceBus.Messaging.Tests
 {
 	public class QueueClientObservableExtensionsTests : IDisposable
 	{
-		private NamespaceManager namespaceManager;
 		private QueueDescription queueDescription;
 		private QueueClient queueClient;
+        private AzureServiceBusTestUtilities azureServiceBusTestUtilities;
 
 		public QueueClientObservableExtensionsTests()
 		{
-			TokenProvider tp = TokenProvider.CreateSharedAccessSignatureTokenProvider("RootManageSharedAccessKey", "nOjksNbZ+HGWJgGDyXqKj3zGu1JubtMVRsHMbuzWI7Y=");
-
-			this.namespaceManager = new NamespaceManager(
-				"sb://dmarsh-msdn.servicebus.windows.net",
-				new NamespaceManagerSettings
-				{
-					TokenProvider = tp
-				});
+            this.azureServiceBusTestUtilities = AzureServiceBusTestUtilities.Create();
 
 			this.queueDescription = new QueueDescription("MessageReceiverExtensionTests-" + Guid.NewGuid())
 			{
 				RequiresSession = true,
 			};
 
-			this.queueDescription = this.namespaceManager.CreateQueue(this.queueDescription);
+			this.queueDescription = this.azureServiceBusTestUtilities.NamespaceManager.CreateQueue(this.queueDescription);
 
-			MessagingFactory messagingFactory = MessagingFactory.Create(
-				this.namespaceManager.Address,
-				new MessagingFactorySettings
-				{
-					TokenProvider = tp
-				});
-
-			this.queueClient = messagingFactory.CreateQueueClient(this.queueDescription.Path);
+			this.queueClient = this.azureServiceBusTestUtilities.MessagingFactory.CreateQueueClient(this.queueDescription.Path);
 		}
 
 		public void Dispose()
 		{
 			this.queueClient.Close();
 
-			this.namespaceManager.DeleteQueue(this.queueDescription.Path);
+			this.azureServiceBusTestUtilities.NamespaceManager.DeleteQueue(this.queueDescription.Path);
 		}
 
 		public class WhenSessionAcceptedFacts : QueueClientObservableExtensionsTests
