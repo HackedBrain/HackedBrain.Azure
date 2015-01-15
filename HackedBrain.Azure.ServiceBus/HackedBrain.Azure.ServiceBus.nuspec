@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">  
   <metadata>
     <id>HackedBrain.Azure.ServiceBus</id>
-    <version>0.1.0-beta</version>
+    <version>0.1.1-beta</version>
     <authors>Drew Marsh</authors>
     <description>An extension library for Windows Azure Service Bus.</description>
     <language>en-US</language>
